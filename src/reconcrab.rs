@@ -191,45 +191,35 @@ async fn make_request(
     config: &Config,
     user_agent: &str,
 ) -> Result<(String, StatusCode, u64), Box<dyn std::error::Error + Send + Sync>> {
-    let mut request_builder = client.get(&url)
-        .header("User-Agent", user_agent);
-
-    if !config.cookies.is_empty() {
-        let cookie_string = config.cookies
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("; ");
-        request_builder = request_builder.header("Cookie", cookie_string);
-    }
-
-    let response = request_builder.send().await?;
-    let status = response.status();
-    let content_length = response.content_length().unwrap_or(0);
-
-    Ok((url, status, content_length))
-}
-
-async fn make_request_with_retry(
-    client: &Client,
-    url: String,
-    config: &Config,
-    user_agent: &str,
-) -> Result<(String, StatusCode, u64), Box<dyn std::error::Error + Send + Sync>> {
     let mut last_error = None;
-    
+
     for attempt in 0..=config.max_retries {
-        match timeout(config.timeout, make_request(client, url.clone(), config, user_agent)).await {
-            Ok(Ok(result)) => return Ok(result),
-            Ok(Err(e)) => last_error = Some(e),
+        let mut request_builder = client.get(&url).header("User-Agent", user_agent);
+
+        if !config.cookies.is_empty() {
+            let cookie_string = config.cookies
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("; ");
+            request_builder = request_builder.header("Cookie", cookie_string);
+        }
+
+        match timeout(config.timeout, request_builder.send()).await {
+            Ok(Ok(response)) => {
+                let status = response.status();
+                let content_length = response.content_length().unwrap_or(0);
+                return Ok((url, status, content_length));
+            }
+            Ok(Err(e)) => last_error = Some(e.into()),
             Err(_) => last_error = Some("Request timed out".to_string().into()),
         }
-        
+
         if attempt < config.max_retries {
             tokio::time::sleep(Duration::from_millis(100 * (attempt + 1) as u64)).await;
         }
     }
-    
+
     Err(last_error.unwrap_or_else(|| "All retry attempts failed".to_string().into()))
 }
 
@@ -265,7 +255,7 @@ async fn brute_force(
 
                 match construct_url(&config.target_url, &word, mode) {
                     Ok(url) => {
-                        match make_request_with_retry(&client, url.clone(), &config, user_agent).await {
+                        match make_request(&client, url.clone(), &config, user_agent).await {
                             Ok((final_url, status, content_length)) => {
                                 if VALID_STATUS_CODES.contains(&status.as_u16()) {
                                     println!("[{}] {} - {} bytes", status.as_u16(), final_url, content_length);
