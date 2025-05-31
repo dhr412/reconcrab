@@ -1,0 +1,38 @@
+name: Build binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (e.g., v2.0.0)"
+        required: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Rust binary
+        run: |
+          mkdir -p src/bin
+          cp src/reconcrab.rs src/bin/
+          cargo build --release
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            mv target/release/reconcrab.exe reconcrab-win.exe
+          else
+            mv target/release/reconcrab reconcrab-linux
+          fi
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ runner.os }}-${{ github.event.inputs.release_version }}
+          path: |
+            reconcrab-*
