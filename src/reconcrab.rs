@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use url::Url;
 use rand::Rng;
 
-// CONSTANTS AND STATIC ARRAYS
+// CONSTANTS
 
 const VALID_STATUS_CODES: &[u16] = &[
     200, 201, 202, 203, 204, 205, 206, 207, 208, 226,
@@ -103,6 +103,7 @@ impl Config {
     }
 }
 
+#[derive(Copy, Clone)]
 enum FuzzMode {
     Subdomain,
     Directory,
@@ -228,14 +229,20 @@ async fn make_request(
 async fn brute_force(
     config: Config,
     wordlist: Vec<String>,
+    modes: Vec<FuzzMode>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = Arc::new(build_http_client(&config)?);
     let semaphore = Arc::new(Semaphore::new(config.concurrent_requests));
     let config = Arc::new(config);
     
+    let mode_list = modes.iter().map(|m| match m {
+        FuzzMode::Directory => "Directory",
+        FuzzMode::Subdomain => "Subdomain",
+    }).collect::<Vec<_>>().join(", ");
     println!("Starting brute force attack...");
     println!("Target: {}", config.target_url);
     println!("Wordlist entries: {}", wordlist.len());
+    println!("Modes: {}", mode_list);
     println!("Concurrent requests: {}", config.concurrent_requests);
     println!("Valid status codes: {:?}", VALID_STATUS_CODES);
     println!("{}","─".repeat(64));
@@ -243,7 +250,8 @@ async fn brute_force(
     let mut handles = Vec::new();
     
     for word in wordlist.into_iter() {
-        for mode in [FuzzMode::Subdomain, FuzzMode::Directory] {
+        for mode in &modes {
+            let mode = *mode;
             let client = Arc::clone(&client);
             let config = Arc::clone(&config);
             let semaphore = Arc::clone(&semaphore);
@@ -305,6 +313,7 @@ fn build_cli() -> Command {
             Arg::new("wordlist")
                 .short('w')
                 .long("wordlist")
+                .visible_alias("wordl")
                 .value_name("FILE")
                 .help("Path to wordlist file (newline separated)")
                 .required(true)
@@ -316,6 +325,22 @@ fn build_cli() -> Command {
                 .value_name("NUMBER")
                 .help("Number of concurrent requests (default: 5000000)")
                 .value_parser(clap::value_parser!(usize))
+        )
+        .arg(
+            Arg::new("directory")
+                .short('d')
+                .long("directory")
+                .visible_alias("dir")
+                .help("Enable directory brute-forcing (default: true if none specified)")
+                .action(clap::ArgAction::SetTrue)
+        )
+        .arg(
+            Arg::new("subdomain")
+                .short('s')
+                .long("subdomain")
+                .visible_alias("subd")
+                .help("Enable subdomain brute-forcing")
+                .action(clap::ArgAction::SetTrue)
         )
         .arg(
             Arg::new("headers")
@@ -344,6 +369,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let target_url = matches.get_one::<String>("target").unwrap().clone();
     let wordlist_file = matches.get_one::<String>("wordlist").unwrap().clone();
     let concurrent_requests = matches.get_one::<usize>("concurrent").copied();
+    let directory_mode = matches.get_flag("directory");
+    let subdomain_mode = matches.get_flag("subdomain");
+    let modes = if !directory_mode && !subdomain_mode {
+        vec![FuzzMode::Directory]
+    } else {
+        let mut m = Vec::new();
+        if directory_mode {
+            m.push(FuzzMode::Directory);
+        }
+        if subdomain_mode {
+            m.push(FuzzMode::Subdomain);
+        }
+        m
+    };
     let headers = matches.get_many::<String>("headers")
         .map(|v| v.cloned().collect::<Vec<_>>());
     let cookies = matches.get_many::<String>("cookies")
@@ -354,7 +393,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Loading wordlist from: {}", wordlist_file);
     let wordlist = stream_wordlist(&wordlist_file).await?;
 
-    brute_force(config, wordlist).await?;
+    brute_force(config, wordlist, modes).await?;
 
     Ok(())
 }
