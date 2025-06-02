@@ -48,7 +48,7 @@ cargo build --release
 
 ---
 
-## ⚙️ Usage
+## Usage
 
 ```bash
 reconcrab -t <target_url> -w <wordlist_file> [OPTIONS]
@@ -61,46 +61,60 @@ reconcrab -t <target_url> -w <wordlist_file> [OPTIONS]
 
 ### Optional Flags
 
+Optional Flags
+
+* `-d`, `--directory`, `--dir`: Enable directory brute-forcing
+
+* `-s`, `--subdomain`, `--subd`: Enable subdomain brute-forcing
+
 * `-c`, `--concurrent`: Number of concurrent requests (default: 5000000)
-* `-H`, `--header`: Custom header(s) (`Key: Value`, can be repeated)
-* `-C`, `--cookie`: Cookie(s) (`name: value`, can be repeated)
+
+* `-H`, `--header`: Custom header(s) (Key: Value, can be repeated)
+
+* `-C`, `--cookie`: Cookie(s) (name: value, can be repeated)
+
 * `-h`, `--help`: Show help message and exit
 
 ### Example
 
 ```bash
-reconcrab -t https://example.com -w paths.txt -c 100 -H "Authorization: Bearer TOKEN" -C "sessionid: abc123"
+reconcrab -t https://example.com -w paths.txt -d -s -c 100 -H "Authorization: Bearer TOKEN" -C "sessionid: abc123"
 ```
 
 ---
 
-## 🧬 How It Works
+## How It Works
 
-1. **Initialization**:
+1. Initialization:
 
-   * Parses CLI input using `clap`.
-   * Builds a `reqwest` HTTP client with optional headers/cookies.
-   * Loads wordlist line-by-line using async file streaming.
+    * Input is parsed using the `clap` library.
 
-2. **Brute Forcing**:
+    * An HTTP client is built using `reqwest`, with optional headers and cookies applied.
 
-   * For each word, constructs two URLs: one for directory (`https://example.com/word`) and one for subdomain (`https://word.example.com`).
-   * Sends asynchronous requests with randomized user agents.
-   * Filters and prints only those responses with a status code in a predefined valid set.
+    * The wordlist is streamed asynchronously, reading line-by-line to reduce memory usage.
 
-3. **Concurrency**:
+2. Brute Forcing:
 
-   * Uses `tokio::Semaphore` to limit concurrency.
-   * Implements retry logic with exponential backoff and timeout enforcement for reliability.
+    * URLs are constructed based on the selected mode (directory or subdomain).
 
-4. **Output**:
+    * Requests are sent asynchronously, with user agents randomized for each.
 
-   * Displays successful hits with status code and content length.
-   * Errors and retries are logged quietly unless debugging is needed.
+    * Responses are filtered based on a predefined set of valid status codes.
+
+3. Concurrency:
+
+    * A Semaphore is used to limit the number of concurrent requests.
+
+    * Retry logic with exponential backoff and request timeouts is implemented for robustness.
+
+4. Output:
+
+    * Successful responses are displayed with status code and content length.
+
+    * Errors and retries are handled quietly.
 
 ---
 
-## 📜 License
+## License
 
 This project is open-sourced under the MIT license. Feel free to fork, contribute, or submit issues!
-
