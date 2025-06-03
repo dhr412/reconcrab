@@ -1,14 +1,15 @@
 # ReconCrab
 
-`ReconCrab` is a high-performance, asynchronous CLI tool built in Rust for brute-forcing web directories and subdomains. Designed for security researchers and penetration testers, this tool leverages massive concurrency and customization to scan large wordlists efficiently. It can fuzz both directories and subdomains using user-specified headers, cookies, and request configurations.
+`ReconCrab` is a high-performance, asynchronous CLI tool built in Rust for brute-forcing web directories and subdomains. This tool leverages massive concurrency and customization to scan large wordlists efficiently. It can fuzz both directories and subdomains using user-specified headers, cookies, and request configurations.
 
-Whether you’re enumerating hidden endpoints or uncovering shadow subdomains, `ReconCrab` is built to deliver speed and control with minimal configuration overhead.
+Whether you’re enumerating hidden endpoints or uncovering shadow subdomains, `ReconCrab` is built to deliver speed and control with minimal configuration overhead while keeping resource usage in check.
 
 ---
 
 ## Features
 
 * **Blazing Fast** – Built with `tokio`, handles millions of concurrent requests efficiently.
+* Resource-Aware Throttling – Dynamically pauses requests when CPU usage exceeds a configurable threshold
 * **Dual Fuzzing Modes** – Supports **directory** and **subdomain** brute-forcing simultaneously.
 * **Highly Configurable** – Add custom headers and cookies for authenticated or complex targets.
 * **Smart Request Handling** – Retries, timeouts, user-agent rotation, and status code filtering.
@@ -67,7 +68,9 @@ Optional Flags
 
 * `-s`, `--subdomain`, `--subd`: Enable subdomain brute-forcing
 
-* `-c`, `--concurrent`: Number of concurrent requests (default: 5000000)
+* `-c`, `--concurrent`: Number of concurrent requests (default: 500000)
+
+* `--cpu`, `--max_cpu`: Maximum percentage of CPU to be used by the tool (default: 50%)
 
 * `-H`, `--header`: Custom header(s) (Key: Value, can be repeated)
 
@@ -103,9 +106,11 @@ reconcrab -t https://example.com -w paths.txt -d -s -c 100 -H "Authorization: Be
 
 3. Concurrency:
 
-    * A Semaphore is used to limit the number of concurrent requests.
+    * Semaphore is used to limit the number of concurrent requests.
 
     * Retry logic with exponential backoff and request timeouts is implemented for robustness.
+
+    * Halts requests if cpu usage exceeds maximum allowed usage
 
 4. Output:
 
