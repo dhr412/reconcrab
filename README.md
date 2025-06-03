@@ -9,7 +9,7 @@ Whether you’re enumerating hidden endpoints or uncovering shadow subdomains, `
 ## Features
 
 * **Blazing Fast** – Built with `tokio`, handles millions of concurrent requests efficiently.
-* Resource-Aware Throttling – Dynamically pauses requests when CPU usage exceeds a configurable threshold
+* **Resource-Aware Throttling** – Dynamically pauses requests when CPU usage exceeds a configurable threshold
 * **Dual Fuzzing Modes** – Supports **directory** and **subdomain** brute-forcing simultaneously.
 * **Highly Configurable** – Add custom headers and cookies for authenticated or complex targets.
 * **Smart Request Handling** – Retries, timeouts, user-agent rotation, and status code filtering.
