@@ -3,9 +3,11 @@ use reqwest::{Client, StatusCode};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use sysinfo::System;
 use tokio::io::{AsyncBufReadExt, BufReader as AsyncBufReader};
 use tokio::fs::File as AsyncFile;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, Notify};
 use tokio::time::timeout;
 use url::Url;
 use rand::Rng;
@@ -58,6 +60,7 @@ struct Config {
     cookies: HashMap<String, String>,
     timeout: Duration,
     max_retries: u8,
+    max_cpu: f32,
 }
 
 impl Config {
@@ -67,8 +70,9 @@ impl Config {
         concurrent_requests: Option<usize>,
         headers: Option<Vec<String>>,
         cookies: Option<Vec<String>>,
+        max_cpu: Option<f32>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let concurrent_requests = concurrent_requests.unwrap_or(5_000_000);
+        let concurrent_requests = concurrent_requests.unwrap_or(500000);
         let headers = Self::parse_key_value_pairs(headers.unwrap_or_default())?;
         let cookies = Self::parse_key_value_pairs(cookies.unwrap_or_default())?;
 
@@ -79,6 +83,11 @@ impl Config {
         };
         let target_url = target_url.trim_end_matches('/').to_string();
 
+        let max_cpu = max_cpu.unwrap_or(50.0);
+        if !(1.0..=100.0).contains(&max_cpu) {
+            return Err(format!("Max CPU must be between 1.0 and 100.0, got {}", max_cpu).into());
+        }
+
         Ok(Config {
             target_url,
             wordlist_file,
@@ -87,6 +96,7 @@ impl Config {
             cookies,
             timeout: Duration::from_secs(15),
             max_retries: 2,
+            max_cpu,
         })
     }
 
@@ -234,32 +244,58 @@ async fn brute_force(
     let client = Arc::new(build_http_client(&config)?);
     let semaphore = Arc::new(Semaphore::new(config.concurrent_requests));
     let config = Arc::new(config);
-    
-    let mode_list = modes.iter().map(|m| match m {
-        FuzzMode::Directory => "Directory",
-        FuzzMode::Subdomain => "Subdomain",
-    }).collect::<Vec<_>>().join(", ");
+
+    let pause_flag = Arc::new(AtomicBool::new(false));
+    let resume_notify = Arc::new(Notify::new());
+
+    {
+        let pause_flag = Arc::clone(&pause_flag);
+        let resume_notify = Arc::clone(&resume_notify);
+        let config = Arc::clone(&config);
+        tokio::spawn(async move {
+            let mut system = System::new_all();
+            loop {
+                system.refresh_cpu_all();
+                let avg_cpu = system.global_cpu_usage();
+                if avg_cpu > config.max_cpu + 4.0 {
+                    pause_flag.store(true, Ordering::Release);
+                } else if pause_flag.swap(false, Ordering::AcqRel) {
+                    resume_notify.notify_waiters();
+                }
+                tokio::time::sleep(Duration::from_millis(256)).await;
+            }
+        });
+    }
+
     println!("Starting brute force attack...");
     println!("Target: {}", config.target_url);
     println!("Wordlist entries: {}", wordlist.len());
-    println!("Modes: {}", mode_list);
+    println!("Modes: {}", modes.iter().map(|m| match m {
+        FuzzMode::Directory => "Directory",
+        FuzzMode::Subdomain => "Subdomain",
+    }).collect::<Vec<_>>().join(", "));
     println!("Concurrent requests: {}", config.concurrent_requests);
     println!("Valid status codes: {:?}", VALID_STATUS_CODES);
-    println!("{}","─".repeat(64));
+    println!("{}", "─".repeat(64));
 
     let mut handles = Vec::new();
-    
+
     for word in wordlist.into_iter() {
         for mode in &modes {
             let mode = *mode;
             let client = Arc::clone(&client);
             let config = Arc::clone(&config);
             let semaphore = Arc::clone(&semaphore);
+            let pause_flag = Arc::clone(&pause_flag);
+            let resume_notify = Arc::clone(&resume_notify);
             let word = word.clone();
             let user_agent = USER_AGENTS[rand::rng().random_range(0..USER_AGENTS.len())];
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.unwrap();
+                while pause_flag.load(Ordering::Relaxed) {
+                    resume_notify.notified().await;
+                }
 
                 match construct_url(&config.target_url, &word, mode) {
                     Ok(url) => {
@@ -281,19 +317,18 @@ async fn brute_force(
             });
 
             handles.push(handle);
-        }    
+        }
     }
 
     for handle in handles {
         let _ = handle.await;
     }
 
-    println!("{}","─".repeat(64));
+    println!("{}", "─".repeat(64));
     println!("Bruteforcing completed!");
-    
+
     Ok(())
 }
-
 // CLI
 
 fn build_cli() -> Command {
@@ -325,6 +360,13 @@ fn build_cli() -> Command {
                 .value_name("NUMBER")
                 .help("Number of concurrent requests (default: 5000000)")
                 .value_parser(clap::value_parser!(usize))
+        )
+        .arg(
+            Arg::new("max_cpu")
+                .long("max_cpu")
+                .value_name("PERCENT")
+                .help("Maximum allowed CPU usage before blocking new requests (default: 50)")
+                .value_parser(clap::value_parser!(f32))
         )
         .arg(
             Arg::new("directory")
@@ -371,6 +413,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let concurrent_requests = matches.get_one::<usize>("concurrent").copied();
     let directory_mode = matches.get_flag("directory");
     let subdomain_mode = matches.get_flag("subdomain");
+    let max_cpu = matches.get_one::<f32>("max_cpu").copied();
     let modes = if !directory_mode && !subdomain_mode {
         vec![FuzzMode::Directory]
     } else {
@@ -388,7 +431,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cookies = matches.get_many::<String>("cookies")
         .map(|v| v.cloned().collect::<Vec<_>>());
 
-    let config = Config::new(target_url, wordlist_file.clone(), concurrent_requests, headers, cookies)?;
+    let config = Config::new(target_url, wordlist_file.clone(), concurrent_requests, headers, cookies, max_cpu)?;
 
     println!("Loading wordlist from: {}", wordlist_file);
     let wordlist = stream_wordlist(&wordlist_file).await?;
