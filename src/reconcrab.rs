@@ -364,6 +364,7 @@ fn build_cli() -> Command {
         .arg(
             Arg::new("max_cpu")
                 .long("max_cpu")
+                .visible_alias("cpu")
                 .value_name("PERCENT")
                 .help("Maximum allowed CPU usage before blocking new requests (default: 50)")
                 .value_parser(clap::value_parser!(f32))
