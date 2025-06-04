@@ -81,7 +81,7 @@ Optional Flags
 ### Example
 
 ```bash
-reconcrab -t https://example.com -w paths.txt -d -s -c 100 -H "Authorization: Bearer TOKEN" -C "sessionid: abc123"
+reconcrab -t https://example.com -w paths.txt -d -s -c 100 --cpu 44 -H "Authorization: Bearer TOKEN" -C "sessionid: abc123"
 ```
 
 ---
