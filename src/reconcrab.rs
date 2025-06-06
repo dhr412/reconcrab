@@ -281,7 +281,12 @@ async fn brute_force(
     let mut handles = Vec::new();
 
     for word in wordlist.into_iter() {
-        for mode in &modes {
+        let selected_modes: &[FuzzMode] = if word.contains('/') {
+            &[FuzzMode::Directory]
+        } else {
+            &modes
+        };
+        for mode in selected_modes {
             let mode = *mode;
             let client = Arc::clone(&client);
             let config = Arc::clone(&config);
